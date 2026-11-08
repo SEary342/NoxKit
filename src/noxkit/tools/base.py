@@ -1,7 +1,7 @@
 from typing import ClassVar
 
 
-class BaseChecker:
+class BaseTool:
     """Base command checker configured by its subclasses."""
 
     session_name: ClassVar[str]
