@@ -3,7 +3,46 @@ name = "noxkit"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+authors = [
+    { name = "Sam Eary", email = "samwise342@gmail.com" }
+]
 requires-python = ">=3.12"
 dependencies = [
     "nox>=2026.10.20",
+]
+
+[project.scripts]
+noxkit = "noxkit:main"
+
+[project.optional-dependencies]
+checkers = [
+    "bandit>=1.9.4",
+    "black>=26.10.1",
+    "flake8>=7.5.0",
+    "pylint>=4.1.3",
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+format = [
+    "black>=26.10.1",
+]
+lint = [
+    "bandit>=1.9.4",
+    "flake8>=7.5.0",
+    "pylint>=4.1.3",
+    "ruff>=0.17.4",
+]
+dev = [
+  {include-group = "lint"},
+  {include-group = "format"},
+  {include-group = "test"}
+]
+test = [
+    "pytest>=9.2.0",
 ]

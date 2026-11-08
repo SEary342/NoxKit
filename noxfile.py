@@ -3,7 +3,8 @@ from pathlib import Path
 
 import nox
 
-sys.path.insert(0, str(Path(__file__).parent))
+SOURCE_ROOT = Path(__file__).parent / "src"
+sys.path.insert(0, str(SOURCE_ROOT))
 
 from noxkit import Project
 from noxkit.checkers import RuffChecker
@@ -18,7 +19,8 @@ project = Project(lint=False, tests=False, coverage=False)
 def check(session: nox.Session) -> None:
     """Validate configuration and run the configured NoxKit checker."""
     project.validate()
-    session.run("python", "-m", "compileall", "-q", "noxkit")
+    session.install("-e", ".")
+    session.run("python", "-m", "compileall", "-q", "src/noxkit")
     session.run(
         "python",
         "-c",
@@ -26,4 +28,4 @@ def check(session: nox.Session) -> None:
     )
     session.install("ruff")
     checker = RuffChecker()
-    session.run(*checker.get_command(["noxkit"]))
+    session.run(*checker.get_command(["src/noxkit"]))
