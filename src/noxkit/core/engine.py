@@ -3,11 +3,14 @@ from pathlib import Path
 
 import nox
 
+from noxkit.core.reporting import Reporter
 from noxkit.core.validation import validate_tool_installed
 from noxkit.matrix.engine import MatrixEngine
 from noxkit.project import Project
 from noxkit.tools import Tool
 from noxkit.tools.registry import tools
+
+_REPORT_DIRECTORY_ENV = "NOXKIT_REPORT_DIRECTORY"
 
 
 class NoxKitEngine:
@@ -102,6 +105,13 @@ class NoxKitEngine:
             )
 
         self._register_check_session()
+        Reporter.register_final_summary(
+            {
+                (tool if isinstance(tool, str) else tool.session_name): stage.name
+                for stage in self.project.stages
+                for tool in stage.tools
+            }
+        )
 
     def _register_tool(
         self,
@@ -124,7 +134,11 @@ class NoxKitEngine:
             if dependencies:
                 session.install(*dependencies)
             validate_tool_installed(session, checker)
-            session.run(*checker.get_command(args))
+            Reporter.run_command(
+                session,
+                checker.session_name,
+                checker.get_command(args),
+            )
 
         description = checker.description
         if description is None and type(checker) is not Tool:
