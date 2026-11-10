@@ -29,7 +29,6 @@ project = Project(
                 Tool(
                     "black",
                     default_args=("--version",),
-                    dependency_group="format",
                 )
             ],
         ),

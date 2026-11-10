@@ -3,14 +3,12 @@ from pathlib import Path
 
 import nox
 
+from noxkit.core.environment import EnvironmentManager
 from noxkit.core.reporting import Reporter
-from noxkit.core.validation import validate_tool_installed
 from noxkit.matrix.engine import MatrixEngine
 from noxkit.project import Project
 from noxkit.tools import Tool
 from noxkit.tools.registry import tools
-
-_REPORT_DIRECTORY_ENV = "NOXKIT_REPORT_DIRECTORY"
 
 
 class NoxKitEngine:
@@ -18,11 +16,14 @@ class NoxKitEngine:
 
     def __init__(self, project: Project):
         self.project = project
-        self.matrix_engine = MatrixEngine()
+        self.environment_manager = EnvironmentManager()
+        self.matrix_engine = MatrixEngine(self.environment_manager)
 
     def register_sessions(self) -> None:
         """Register Nox sessions for the configured project checks."""
         self.project.validate()
+        matrix_session_names = self.matrix_engine.session_names(self.project)
+        has_matrix = self.matrix_engine.is_configured(self.project)
 
         configured_tools = [tool for stage in self.project.stages for tool in stage.tools]
         tool_names = [name for name in configured_tools if isinstance(name, str)]
@@ -41,6 +42,16 @@ class NoxKitEngine:
         session_names = [tool.session_name for tool in resolved_tools]
         if len(session_names) != len(set(session_names)):
             raise ValueError("each pipeline tool must have a unique Nox session name")
+        unknown_dependency_sessions = sorted(
+            name
+            for name, dependencies in self.project.dependencies.items()
+            if dependencies and name not in session_names
+        )
+        if unknown_dependency_sessions:
+            raise ValueError(
+                "dependencies configured for unknown tool session(s): "
+                + ", ".join(unknown_dependency_sessions)
+            )
 
         stage_names = [stage.name for stage in self.project.stages]
         pipeline_stage_names = [f"pipeline-{stage.name}" for stage in self.project.stages]
@@ -50,6 +61,8 @@ class NoxKitEngine:
             *pipeline_stage_names,
             "pipeline",
             "check",
+            *(matrix_session_names if has_matrix else []),
+            *( ["compatibility"] if has_matrix else []),
         ]
         if len(all_session_names) != len(set(all_session_names)):
             raise ValueError("tool, stage, and pipeline sessions must have unique names")
@@ -96,22 +109,30 @@ class NoxKitEngine:
             )
             previous_pipeline_stage = pipeline_stage_name
 
+        if has_matrix:
+            self.matrix_engine.register_sessions(
+                self.project,
+                requires=[previous_pipeline_stage] if previous_pipeline_stage else [],
+                default=previous_pipeline_stage is None,
+            )
+
         if previous_pipeline_stage is not None:
             self._register_aggregate_session(
                 "pipeline",
-                requires=[previous_pipeline_stage],
+                requires=["compatibility"] if has_matrix else [previous_pipeline_stage],
                 description="Run the complete project pipeline.",
                 default=True,
             )
-
         self._register_check_session()
-        Reporter.register_final_summary(
-            {
-                (tool if isinstance(tool, str) else tool.session_name): stage.name
-                for stage in self.project.stages
-                for tool in stage.tools
-            }
+        stages_by_session = {
+            (tool if isinstance(tool, str) else tool.session_name): stage.name
+            for stage in self.project.stages
+            for tool in stage.tools
+        }
+        stages_by_session.update(
+            {name: "Compatibility Matrix" for name in matrix_session_names}
         )
+        Reporter.register_final_summary(stages_by_session)
 
     def _register_tool(
         self,
@@ -123,22 +144,23 @@ class NoxKitEngine:
         args = self.project.args.get(checker.session_name, [])
         dependencies = self.project.dependencies.get(
             checker.session_name,
-            list(checker.dependencies)
-            or ([] if checker.dependency_group else [checker.session_name]),
+            list(checker.dependencies),
         )
+        if dependencies or checker.dependency_group:
+            raise ValueError(
+                f"tool '{checker.session_name}' cannot install dependencies in a "
+                "normal project check; install them in the project's development "
+                "environment before invoking Nox"
+            )
 
         def run_checker(session: nox.Session) -> None:
-            session.install("-e", ".")
-            if checker.dependency_group:
-                session.install("--group", checker.dependency_group)
-            if dependencies:
-                session.install(*dependencies)
-            validate_tool_installed(session, checker)
-            Reporter.run_command(
-                session,
-                checker.session_name,
-                checker.get_command(args),
-            )
+            session.env.update(self.project.env)
+            command = checker.get_command(args)
+            try:
+                Reporter.run_command(session, checker.session_name, command)
+            except Exception as error:
+                Reporter.record_failure(checker.session_name, command, error)
+                raise
 
         description = checker.description
         if description is None and type(checker) is not Tool:
@@ -149,6 +171,7 @@ class NoxKitEngine:
             requires=requires or None,
             allow_parallel=allow_parallel,
             default=False,
+            venv_backend=self.environment_manager.select("normal"),
         )(run_checker)
 
     def _register_check_session(self) -> None:
@@ -156,7 +179,6 @@ class NoxKitEngine:
 
         def check(session: nox.Session) -> None:
             self.project.validate()
-            session.install("-e", ".")
             session.run("python", "-m", "compileall", "-q", str(package_root))
             session.run(
                 "python",
@@ -166,7 +188,11 @@ class NoxKitEngine:
             )
 
         check.__doc__ = "Validate the project configuration and NoxKit package."
-        nox.session(name="check", default=False)(check)
+        nox.session(
+            name="check",
+            default=False,
+            venv_backend=self.environment_manager.select("normal"),
+        )(check)
 
     @staticmethod
     def _register_aggregate_session(
@@ -186,4 +212,5 @@ class NoxKitEngine:
             requires=requires,
             allow_parallel=allow_parallel,
             default=default,
+            venv_backend="none",
         )(run_stage)

@@ -9,7 +9,6 @@ tools: dict[str, Tool] = {
     "ruff-format": Tool(
         "ruff-format",
         command_prefix=("ruff", "format"),
-        dependencies=("ruff",),
         description="Format Python code with Ruff.",
     ),
     "pylint": Tool(

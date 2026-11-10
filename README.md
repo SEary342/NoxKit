@@ -23,7 +23,6 @@ project = Project(
 				Tool(
 					"black",
 					default_args=("--check", "."),
-					dependency_group="format",
 				)
 			],
 		),
@@ -34,7 +33,14 @@ NoxKitEngine(project).register_sessions()
 
 When using NoxKit from a source checkout with a `src/` layout, add that source
 directory to `sys.path` before importing `noxkit`, as the repository's own
-`noxfile.py` does. Installed projects do not need that bootstrap.
+`noxfile.py` does. NoxKit must also be importable by the Python environment that
+launches Nox, because Nox imports the Noxfile before starting a session.
+
+Normal checker sessions use Nox's `none` backend and do not install packages.
+Launch Nox from the project's development environment so its executables are on
+`PATH`, for example `uv run nox`, `poetry run nox`, or `nox` from an activated
+virtual environment. Nox and NoxKit must be installed in, or otherwise
+importable by, the environment that runs the Nox command.
 
 ## Stages and Tools
 
@@ -53,28 +59,37 @@ Stage(
 The built-in registry currently includes `ruff`, `ruff-format`, `pylint`,
 `bandit`, `pytest`, `pytest-cov`, `mypy`, and `pyright`. For inline tools, the
 session name is also the default executable name. Set `command_prefix` when the
-command differs, `default_args` for default command-line arguments, and
-`dependencies` for extra packages to install.
+command differs and `default_args` for default command-line arguments. Normal
+checks use tools already installed in the project's development environment;
+matrix package versions are configured with `Project.compatibility`.
 
-## Tool Dependencies
+## Normal Checks and Matrix Runs
 
-Each tool session installs the project (`-e .`) into its isolated Nox
-environment. To use a tool version selected by the project, declare it in a
-dependency group and reference that group with `dependency_group`:
+Normal tool sessions neither create a virtual environment nor install or update
+dependencies. Install checkers in the project's existing development
+environment and configure any required environment variables with `Project.env`.
+Non-empty `Tool.dependencies`, `Tool.dependency_group`, or
+`Project.dependencies` entries are rejected for normal checks; NoxKit will not
+silently install them.
 
-```toml
-[dependency-groups]
-format = ["black==24.10.0"]
-```
+Compatibility matrices use isolated uv-backed Nox sessions. Configure explicit
+version lists; each matrix job installs the project, `pytest`, and each requested
+package version without generating a lockfile:
 
 ```python
-Tool("black", default_args=("--check", "."), dependency_group="format")
+project = Project(
+	python=["3.12", "3.13"],
+	compatibility={"django": ["4.2", "5.0"]},
+)
 ```
 
-The group is installed with `uv`; NoxKit does not add an unpinned Black
-requirement in this case. Alternatively, `Project.dependencies` can provide
-per-session package requirements, keyed by session name. `Project.args` provides
-additional command-line arguments keyed the same way.
+Run the aggregate with `nox --session compatibility`, or a single generated job
+such as `nox --session compatibility-3.12-django-4.2`. `Project.exclude` and
+`Project.skip_combination` filter combinations before sessions are registered.
+`Project.args["pytest"]` supplies arguments to matrix test runs.
+
+`Project.args` supplies additional command-line arguments keyed by tool session
+name for normal checks.
 
 ## Running Sessions
 
@@ -117,13 +132,13 @@ Project(
 
 | Field | Type | Current behavior |
 |---|---|---|
-| `python` | `list[str]` | Validates non-empty version strings. It does not yet create Python-version sessions. |
-| `compatibility` | `dict[str, Any]` | Reserved for compatibility-matrix configuration; not yet consumed by the session engine. |
+| `python` | `list[str]` | Adds requested Python versions to the compatibility matrix. |
+| `compatibility` | `dict[str, Any]` | Maps package names to explicit version lists for the compatibility matrix. |
 | `args` | `dict[str, list[str]]` | Adds arguments to a tool command, keyed by its Nox session name. |
-| `env` | `dict[str, str]` | Reserved; not yet applied to tool sessions. |
-| `exclude` | `list[dict[str, Any]]` | Reserved for matrix exclusions; not yet consumed by the session engine. |
-| `skip_combination` | `Callable[[dict[str, Any]], bool] \| None` | Reserved for matrix filtering; not yet consumed by the session engine. |
-| `dependencies` | `dict[str, list[str]]` | Adds package requirements for a tool session, keyed by session name. When set, this list overrides that tool's `Tool.dependencies`. |
+| `env` | `dict[str, str]` | Environment variables applied to normal and matrix commands. |
+| `exclude` | `list[dict[str, Any]]` | Excludes matrix combinations matching each partial mapping. |
+| `skip_combination` | `Callable[[dict[str, Any]], bool] \| None` | Filters matrix combinations before session registration. |
+| `dependencies` | `dict[str, list[str]]` | Non-empty normal-check entries are rejected; normal sessions never install dependencies. |
 | `stages` | `list[Stage]` | Defines the ordered pipeline and aggregate stage sessions. |
 | `max_concurrency` | `int \| None` | A positive value is validated, but the limit is not yet applied to Nox execution. |
 
@@ -161,18 +176,15 @@ Tool(
 | Option | Behavior |
 |---|---|
 | `session_name` | Required for an inline tool. It names the Nox session and, by default, the executable to run. |
-| `command_prefix` | Replaces the default executable command. Its first item is checked for availability in the session environment. |
+| `command_prefix` | Replaces the default executable command. |
 | `default_args` | Arguments appended after `command_prefix` and before any `Project.args` for the session. |
-| `dependencies` | Additional package requirements installed into the session environment. |
+| `dependencies` | Unsupported for normal checks; install checker dependencies in the development environment. Matrix pins use `Project.compatibility`. |
 | `description` | Description shown by Nox when listing sessions. |
-| `dependency_group` | Installs a PEP 735 dependency group from the project with `uv`, instead of implicitly installing a package named after the tool. |
+| `dependency_group` | Unsupported for normal checks; configure that dependency group in the development environment. |
 
-Every tool session installs the project editable (`-e .`) first. It then
-installs `dependency_group`, if configured, and the applicable package
-requirements. `Project.dependencies[session_name]` takes precedence over
-`Tool.dependencies`; otherwise `Tool.dependencies` is used. If neither a
-dependency group nor explicit dependencies are configured, NoxKit installs a
-package matching the session name.
+Normal tool sessions execute the configured command directly in the environment
+used to launch Nox. Matrix sessions alone create uv environments and install
+their declared packages.
 
 `Tool.get_command(args)` builds the final executable command as:
 
@@ -180,8 +192,7 @@ package matching the session name.
 command_prefix or (session_name,), default_args, args
 ```
 
-The engine checks that the executable is available after installing the
-dependencies and before starting the command.
+Nox reports a missing executable as a failed session.
 
 ## Built-in Tool Names
 
