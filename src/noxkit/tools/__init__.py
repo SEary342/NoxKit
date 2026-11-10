@@ -1,15 +1,5 @@
-"""Built-in checker interfaces and integrations."""
+"""Tool configuration primitives."""
 
-from .base import BaseTool
-from .lint import PylintChecker, RuffChecker
-from .security import BanditChecker
-from .typing import MypyChecker, PyrightChecker
+from .base import Tool
 
-__all__ = [
-    "BanditChecker",
-    "BaseTool",
-    "MypyChecker",
-    "PylintChecker",
-    "PyrightChecker",
-    "RuffChecker",
-]
+__all__ = ["Tool"]

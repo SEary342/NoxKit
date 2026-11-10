@@ -69,13 +69,15 @@ The configuration object should use sensible defaults and require minimal config
 Illustrative API (not finalized):
 
 ```python
-from noxkit import Project
+from noxkit import Project, Stage
 
 project = Project(
     python=["3.12", "3.13", "3.14", "3.15"],
-    lint=True,
-    tests=True,
-    coverage=True,
+  stages=[
+    Stage(name="lint", tools=["ruff"], parallel=True),
+    Stage(name="tests", tools=["pytest"], parallel=False),
+    Stage(name="coverage", tools=["pytest-cov"], parallel=False),
+  ],
     compatibility={
         "django": "lts",
     },
